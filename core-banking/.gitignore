@@ -1,0 +1,22 @@
+# Lingkungan & Rahasia (SANGAT PENTING)
+.env
+.env.*
+
+# Python Cache & Virtual Environment
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+
+# Konfigurasi Lokal Vercel
+.vercel/
+
+# Database Lokal (Jika ada sisa-sisa)
+*.sqlite3
+*.db
+
+# OS Files (Mac/Windows)
+.DS_Store
+Thumbs.db
