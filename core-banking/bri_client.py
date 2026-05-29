@@ -42,16 +42,23 @@ def get_timestamp_plain() -> str:
     return now.strftime("%Y-%m-%dT%H:%M:%S+07:00")
 
 
-# ─── PRIVATE KEY ─────────────────────────────────────────
+# ─── PRIVATE KEY (DIUBAH UNTUK VERCEL) ───────────────────
 
 def load_private_key():
-    key_path = os.getenv("BRI_PRIVATE_KEY_PATH")
-    if not key_path:
-        raise ValueError("BRI_PRIVATE_KEY_PATH belum diset di file .env")
-    if not os.path.exists(key_path):
-        raise FileNotFoundError(f"File private key tidak ditemukan di: {key_path}")
-    with open(key_path, "rb") as f:
-        return serialization.load_pem_private_key(f.read(), password=None)
+    # Mengambil isi teks kunci langsung dari Environment Variables
+    private_key_pem = os.getenv("BRI_PRIVATE_KEY")
+    
+    if not private_key_pem:
+        raise ValueError("Variabel BRI_PRIVATE_KEY belum diset di Vercel atau .env")
+    
+    # Mengembalikan format baris baru jika Vercel membacanya sebagai literal '\n'
+    private_key_pem = private_key_pem.replace('\\n', '\n')
+    
+    # Memuat kunci menggunakan cryptography
+    return serialization.load_pem_private_key(
+        private_key_pem.encode("utf-8"), 
+        password=None
+    )
 
 
 # ─── TOKEN ───────────────────────────────────────────────
