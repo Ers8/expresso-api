@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
+import textwrap
 
 load_dotenv()
 
@@ -42,21 +43,41 @@ def get_timestamp_plain() -> str:
     return now.strftime("%Y-%m-%dT%H:%M:%S+07:00")
 
 
-# ─── PRIVATE KEY (DIUBAH UNTUK VERCEL) ───────────────────
+# ─── PRIVATE KEY ─────────────────────────────────────────
 
 def load_private_key():
-    # Mengambil isi teks kunci langsung dari Environment Variables
-    private_key_pem = os.getenv("BRI_PRIVATE_KEY")
+    raw_key = os.getenv("BRI_PRIVATE_KEY")
     
-    if not private_key_pem:
-        raise ValueError("Variabel BRI_PRIVATE_KEY belum diset di Vercel atau .env")
+    if not raw_key:
+        raise ValueError("Variabel BRI_PRIVATE_KEY belum diset.")
     
-    # Mengembalikan format baris baru jika Vercel membacanya sebagai literal '\n'
-    private_key_pem = private_key_pem.replace('\\n', '\n')
+    # 1. Bersihkan tanda kutip jika terbawa
+    raw_key = raw_key.strip("'\"")
     
-    # Memuat kunci menggunakan cryptography
+    # 2. Ganti literal \n menjadi baris baru sungguhan agar mudah dipotong
+    raw_key = raw_key.replace('\\n', '\n')
+    
+    header = "-----BEGIN PRIVATE KEY-----"
+    footer = "-----END PRIVATE KEY-----"
+    
+    if header not in raw_key or footer not in raw_key:
+        raise ValueError("Kunci tidak memiliki BEGIN atau END PRIVATE KEY yang valid")
+    
+    # 3. Ekstrak HANYA isi teks sandinya saja (buang header dan footer lama)
+    body = raw_key.split(header)[1].split(footer)[0]
+    
+    # 4. Hapus SELURUH spasi, tab, dan enter dari isi sandi
+    body = "".join(body.split())
+    
+    # 5. Susun ulang baris per 64 karakter (Aturan baku format PEM)
+    formatted_body = "\n".join(textwrap.wrap(body, 64))
+    
+    # 6. Rakit ulang menjadi format PEM yang 100% sempurna
+    final_pem = f"{header}\n{formatted_body}\n{footer}\n"
+    
+    # Muat menggunakan cryptography
     return serialization.load_pem_private_key(
-        private_key_pem.encode("utf-8"), 
+        final_pem.encode("utf-8"), 
         password=None
     )
 
