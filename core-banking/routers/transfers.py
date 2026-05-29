@@ -8,7 +8,7 @@ import uuid
 router = APIRouter()
 
 # ================================================================
-# 1. ENDPOINT TRANSFER (POST - Form Input & Auto IP)
+# 1. ENDPOINT TRANSFER
 # ================================================================
 
 @router.post("/bri/transfer")
@@ -22,7 +22,7 @@ async def bri_transfer(
 ):
     """Transfer via Form Input. IP Address ditangkap otomatis oleh sistem backend."""
     
-    # Validasi Minimal Transfer (Fail-Fast)
+    # Validasi Minimal Transfer
     if amount < 50000:
         raise HTTPException(
             status_code=400, 
@@ -32,21 +32,19 @@ async def bri_transfer(
     # Tangkap IP Address otomatis dari request
     ip_address = request.headers.get("X-Forwarded-For", request.client.host)
     if ip_address and "," in ip_address:
-        ip_address = ip_address.split(",")[0].strip()  # Ambil IP asli jika ada proxy
+        ip_address = ip_address.split(",")[0].strip() 
     if not ip_address:
         ip_address = "127.0.0.1"
         
     # Generate ID Transaksi unik
     tx_id = "TXN-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-" + str(uuid.uuid4())[:6].upper()
 
-    # Data pelengkap di-hardcode untuk MVP (bisa diubah nanti)
     purpose_code = "SALA"
     description = "Transfer via API Gateway"
     destination_type = "DOMESTIC"
     country_code = "ID"
 
     with Session(engine) as db:
-        # --- A. Validasi Akun ---
         sender   = db.get(Account, sender_account)
         receiver = db.get(Account, receiver_account)
 
@@ -64,7 +62,7 @@ async def bri_transfer(
 
         balance_before = sender.balance
 
-        # --- B. Catat Transaksi (Status Awal PENDING) ---
+        # Catat Transaksi
         tx = Transaction(
             transaction_id    = tx_id,
             sender_account    = sender_account,
@@ -83,9 +81,9 @@ async def bri_transfer(
             status            = "PENDING"
         )
         db.add(tx)
-        db.commit() # Simpan ID Transaksi ke DB sebelum nembak BRI
+        db.commit() 
 
-        # --- C. Eksekusi API BRI ---
+        # Eksekusi API BRI
         try:
             bri_response = await transfer_bri(
                 sender   = sender_account,
@@ -101,7 +99,7 @@ async def bri_transfer(
                     f"Message: {bri_response.get('responseMessage')}"
                 )
 
-            # --- D. Update Saldo & Status (SUCCESS) ---
+            # Update Saldo & Status
             sender.balance   -= amount
             receiver.balance += amount
             tx.status         = "SUCCESS"

@@ -16,7 +16,7 @@ BRI_BASE_URL  = os.getenv("BRI_BASE_URL")
 BRI_CLIENT_ID = os.getenv("BRI_CLIENT_ID")
 BRI_SECRET    = os.getenv("BRI_CLIENT_SECRET")
 
-# ─── MAPPING AKUN LOKAL → BRI SANDBOX ────────────────────
+# MAPPING AKUN LOKAL → BRI SANDBOX 
 BRI_SANDBOX_ACCOUNTS = {
     "0123456789": "888801000003301",
     "1122334455": "888801000157610",
@@ -30,7 +30,7 @@ def get_bri_account(local_account: str) -> str:
     return BRI_SANDBOX_ACCOUNTS.get(local_account, "888801000157508")
 
 
-# ─── TIMESTAMP ───────────────────────────────────────────
+# TIMESTAMP
 
 WIB = timezone(timedelta(hours=7))
 
@@ -43,7 +43,7 @@ def get_timestamp_plain() -> str:
     return now.strftime("%Y-%m-%dT%H:%M:%S+07:00")
 
 
-# ─── PRIVATE KEY ─────────────────────────────────────────
+# PRIVATE KEY
 
 def load_private_key():
     raw_key = os.getenv("BRI_PRIVATE_KEY")
@@ -51,10 +51,8 @@ def load_private_key():
     if not raw_key:
         raise ValueError("Variabel BRI_PRIVATE_KEY belum diset.")
     
-    # 1. Bersihkan tanda kutip jika terbawa
     raw_key = raw_key.strip("'\"")
     
-    # 2. Ganti literal \n menjadi baris baru sungguhan agar mudah dipotong
     raw_key = raw_key.replace('\\n', '\n')
     
     header = "-----BEGIN PRIVATE KEY-----"
@@ -62,27 +60,18 @@ def load_private_key():
     
     if header not in raw_key or footer not in raw_key:
         raise ValueError("Kunci tidak memiliki BEGIN atau END PRIVATE KEY yang valid")
-    
-    # 3. Ekstrak HANYA isi teks sandinya saja (buang header dan footer lama)
     body = raw_key.split(header)[1].split(footer)[0]
-    
-    # 4. Hapus SELURUH spasi, tab, dan enter dari isi sandi
     body = "".join(body.split())
-    
-    # 5. Susun ulang baris per 64 karakter (Aturan baku format PEM)
     formatted_body = "\n".join(textwrap.wrap(body, 64))
-    
-    # 6. Rakit ulang menjadi format PEM yang 100% sempurna
     final_pem = f"{header}\n{formatted_body}\n{footer}\n"
     
-    # Muat menggunakan cryptography
     return serialization.load_pem_private_key(
         final_pem.encode("utf-8"), 
         password=None
     )
 
 
-# ─── TOKEN ───────────────────────────────────────────────
+# TOKEN
 
 async def get_bri_token_snap() -> str:
     timestamp      = get_timestamp()
@@ -114,7 +103,7 @@ async def get_bri_token_snap() -> str:
         return data["accessToken"]
 
 
-# ─── SIGNATURE API ───────────────────────────────────────
+# SIGNATURE API
 
 def make_api_signature(method: str, path: str, token: str,
                        body: dict, timestamp: str) -> str:
@@ -131,7 +120,7 @@ def make_api_signature(method: str, path: str, token: str,
     return signature
 
 
-# ─── TRANSFER INTRABANK ──────────────────────────────────
+# TRANSFER INTRABANK
 
 async def transfer_bri(sender: str, receiver: str,
                        amount: int, ref_id: str) -> dict:
