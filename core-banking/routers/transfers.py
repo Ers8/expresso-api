@@ -8,7 +8,7 @@ import uuid
 router = APIRouter()
 
 # ================================================================
-# 1. ENDPOINT TRANSFER
+# 1. ENDPOINT TRANSFER (POST - PRODUCTION)
 # ================================================================
 
 @router.post("/bri/transfer")
@@ -21,28 +21,24 @@ async def bri_transfer(
     longitude: float = Form(106.8, description="Longitude (Nanti diisi otomatis oleh Frontend)")
 ):
     """Transfer via Form Input. IP Address ditangkap otomatis oleh sistem backend."""
-    
-    # Validasi Minimal Transfer
+
     if amount < 50000:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail="Nominal transfer minimal adalah Rp50.000"
         )
-    
-    # Tangkap IP Address otomatis dari request
+
     ip_address = request.headers.get("X-Forwarded-For", request.client.host)
     if ip_address and "," in ip_address:
-        ip_address = ip_address.split(",")[0].strip() 
+        ip_address = ip_address.split(",")[0].strip()
     if not ip_address:
         ip_address = "127.0.0.1"
-        
-    # Generate ID Transaksi unik
-    tx_id = "TXN-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-" + str(uuid.uuid4())[:6].upper()
 
-    purpose_code = "SALA"
-    description = "Transfer via API Gateway"
+    tx_id            = "TXN-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-" + str(uuid.uuid4())[:6].upper()
+    purpose_code     = "SALA"
+    description      = "Transfer via API Gateway"
     destination_type = "DOMESTIC"
-    country_code = "ID"
+    country_code     = "ID"
 
     with Session(engine) as db:
         sender   = db.get(Account, sender_account)
@@ -62,7 +58,6 @@ async def bri_transfer(
 
         balance_before = sender.balance
 
-        # Catat Transaksi
         tx = Transaction(
             transaction_id    = tx_id,
             sender_account    = sender_account,
@@ -81,9 +76,8 @@ async def bri_transfer(
             status            = "PENDING"
         )
         db.add(tx)
-        db.commit() 
+        db.commit()
 
-        # Eksekusi API BRI
         try:
             bri_response = await transfer_bri(
                 sender   = sender_account,
@@ -99,15 +93,14 @@ async def bri_transfer(
                     f"Message: {bri_response.get('responseMessage')}"
                 )
 
-            # Update Saldo & Status
             sender.balance   -= amount
             receiver.balance += amount
             tx.status         = "SUCCESS"
             db.commit()
 
             return {
-                "status": "SUCCESS",
-                "transaction_id": tx_id,
+                "status":             "SUCCESS",
+                "transaction_id":     tx_id,
                 "ip_address_detected": ip_address,
                 "transfer_info": {
                     "sender":         sender.owner_name,
@@ -120,7 +113,6 @@ async def bri_transfer(
             }
 
         except Exception as e:
-            # Jika gagal di sisi BRI, ubah status jadi FAILED dan saldo aman tidak dipotong
             tx.status = "FAILED"
             db.commit()
             raise HTTPException(status_code=502, detail=str(e))
@@ -137,14 +129,13 @@ async def bri_transfer_via_url(
     receiver: str = "9876543210",
     amount: int = 100000
 ):
-    """Transfer instan via URL Browser (HANYA UNTUK TESTING). 
-       Contoh: /api/v1/bri/transfer-via-url?amount=50000
+    """Transfer instan via URL Browser (HANYA UNTUK TESTING).
+       Contoh: /api/v1/bri/transfer-via-url?sender=0123456789&receiver=9876543210&amount=100000
     """
-    
-    # Validasi Minimal Transfer
+
     if amount < 50000:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail="Nominal transfer minimal adalah Rp50.000"
         )
 
@@ -154,14 +145,13 @@ async def bri_transfer_via_url(
     if not ip_address:
         ip_address = "127.0.0.1"
 
-    tx_id = "TXN-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-" + str(uuid.uuid4())[:6].upper()
-
-    purpose_code = "SALA"
-    description = "Test Transfer via URL Browser"
+    tx_id            = "TXN-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-" + str(uuid.uuid4())[:6].upper()
+    purpose_code     = "SALA"
+    description      = "Test Transfer via URL Browser"
     destination_type = "DOMESTIC"
-    country_code = "ID"
-    latitude = -6.2
-    longitude = 106.8
+    country_code     = "ID"
+    latitude         = -6.2
+    longitude        = 106.8
 
     with Session(engine) as db:
         sender_acc   = db.get(Account, sender)
@@ -171,8 +161,15 @@ async def bri_transfer_via_url(
             raise HTTPException(status_code=404, detail="Akun pengirim tidak ditemukan")
         if not receiver_acc:
             raise HTTPException(status_code=404, detail="Akun penerima tidak ditemukan")
+        if sender_acc.is_blocked:
+            raise HTTPException(status_code=403, detail=f"Akun {sender_acc.owner_name} diblokir")
         if sender_acc.balance < amount:
-            raise HTTPException(status_code=400, detail="Saldo tidak mencukupi")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Saldo tidak mencukupi. Saldo: Rp{sender_acc.balance:,} | Dibutuhkan: Rp{amount:,}"
+            )
+
+        balance_before = sender_acc.balance
 
         tx = Transaction(
             transaction_id    = tx_id,
@@ -204,7 +201,10 @@ async def bri_transfer_via_url(
 
             response_code = bri_response.get("responseCode", "")
             if not response_code.startswith("2"):
-                raise Exception(f"BRI menolak — Code: {response_code}")
+                raise Exception(
+                    f"BRI menolak — Code: {response_code}, "
+                    f"Message: {bri_response.get('responseMessage')}"
+                )
 
             sender_acc.balance   -= amount
             receiver_acc.balance += amount
@@ -212,10 +212,29 @@ async def bri_transfer_via_url(
             db.commit()
 
             return {
-                "status": "SUCCESS",
-                "pesan": "Transfer berhasil!",
-                "ip_address": ip_address,
-                "sisa_saldo": sender_acc.balance
+                "status":              "SUCCESS",
+                "transaction_id":      tx_id,
+                "ip_address_detected": ip_address,
+                "transfer_info": {
+                    "sender":         sender_acc.owner_name,
+                    "receiver":       receiver_acc.owner_name,
+                    "amount":         f"Rp{amount:,}",
+                    "balance_before": f"Rp{balance_before:,}",
+                    "balance_after":  f"Rp{sender_acc.balance:,}",
+                },
+                "bri_response":   bri_response,
+                "transaction_log": {
+                    "transaction_id":  tx_id,
+                    "purpose_code":    purpose_code,
+                    "description":     description,
+                    "destination_type": destination_type,
+                    "ip_address":      ip_address,
+                    "country_code":    country_code,
+                    "latitude":        latitude,
+                    "longitude":       longitude,
+                    "timestamp":       datetime.now(timezone.utc).isoformat(),
+                    "status":          "SUCCESS"
+                }
             }
 
         except Exception as e:
