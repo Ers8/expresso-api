@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Form, Request
 from sqlalchemy.orm import Session
 from models.db_models import Account, Transaction, engine
 from datetime import datetime, timezone
-from bri_client import transfer_bri
+from bri_client import transfer_bri, transfer_interbank_bri
 import uuid
 
 router = APIRouter()
@@ -235,6 +235,135 @@ async def bri_transfer_via_url(
                     "timestamp":       datetime.now(timezone.utc).isoformat(),
                     "status":          "SUCCESS"
                 }
+            }
+
+        except Exception as e:
+            tx.status = "FAILED"
+            db.commit()
+            raise HTTPException(status_code=502, detail=str(e))
+        
+# ================================================================
+# 3. ENDPOINT TRANSFER INTERBANK (BEDA BANK)
+# ================================================================
+
+# ================================================================
+# 3. ENDPOINT TRANSFER INTERBANK (BEDA BANK)
+# ================================================================
+
+@router.post("/bri/transfer-interbank")
+async def bri_transfer_interbank(
+    request: Request,
+    sender_account: str = Form(..., description="Rekening Pengirim (Internal). Contoh: 0123456789"),
+    receiver_account: str = Form(..., description="Rekening Tujuan (Bank Lain)"),
+    bank_code: str = Form(..., description="Kode Bank Tujuan (contoh: 014 untuk BCA, 008 untuk Mandiri)"),
+    amount: int = Form(..., description="Nominal Transfer"),
+    latitude: float = Form(-6.2, description="Latitude"),
+    longitude: float = Form(106.8, description="Longitude")
+):
+    """
+    ### 💡 Panduan Testing Sandbox
+    Untuk menghindari error **"Akun tidak ditemukan"**, pastikan `sender_account` dan `receiver_account` sudah terdaftar di Database lokal:
+    
+    * **`0123456789`**
+    * **`1122334455`**
+    * **`5544332211`**
+    * **`9876543210`**
+    """
+
+    if amount < 50000:
+        raise HTTPException(status_code=400, detail="Nominal transfer minimal Rp50.000")
+
+    ip_address = request.headers.get("X-Forwarded-For", request.client.host)
+    if ip_address and "," in ip_address:
+        ip_address = ip_address.split(",")[0].strip()
+    if not ip_address:
+        ip_address = "127.0.0.1"
+
+    tx_id = "TXN-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-" + str(uuid.uuid4())[:6].upper()
+    
+    with Session(engine) as db:
+        # 1. CEK KEDUA AKUN DI DATABASE LOKAL
+        sender = db.get(Account, sender_account)
+        receiver = db.get(Account, receiver_account)
+        
+        if not sender:
+            raise HTTPException(status_code=404, detail="Akun pengirim tidak ditemukan di database.")
+            
+        if not receiver:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Akun tujuan {receiver_account} tidak terdaftar di sistem database. Silakan daftarkan dulu untuk testing."
+            )
+            
+        if sender.is_blocked:
+            raise HTTPException(status_code=403, detail=f"Akun {sender.owner_name} diblokir")
+            
+        if sender.balance < amount:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Saldo tidak mencukupi. Saldo: Rp{sender.balance:,}"
+            )
+
+        balance_before = sender.balance
+
+        # 2. REKAM TRANSAKSI KE DATABASE
+        tx = Transaction(
+            transaction_id    = tx_id,
+            sender_account    = sender_account,
+            receiver_account  = receiver_account,
+            amount            = amount,
+            purpose_code      = "SALA",
+            description       = f"Transfer Interbank ke Bank {bank_code}",
+            destination_type  = "EXTERNAL_BANK",
+            ip_address        = ip_address,
+            country_code      = "ID",
+            latitude          = latitude,
+            longitude         = longitude,
+            timestamp         = datetime.now(timezone.utc),
+            sentinel_score    = None,
+            sentinel_decision = "PENDING",
+            status            = "PENDING"
+        )
+        db.add(tx)
+        db.commit()
+
+        try:
+            # 3. TEMBAK API BRI (Nama otomatis diambil dari field owner_name di DB)
+            bri_response = await transfer_interbank_bri(
+                sender        = sender_account,
+                receiver      = receiver_account,
+                receiver_name = receiver.owner_name, 
+                bank_code     = bank_code,
+                amount        = amount,
+                ref_id        = tx_id
+            )
+
+            # Memastikan respons sukses dari API bank
+            response_code = bri_response.get("responseCode", "")
+            if not response_code.startswith("2"):
+                raise Exception(
+                    f"BRI menolak — Code: {response_code}, "
+                    f"Message: {bri_response.get('responseMessage')}"
+                )
+
+            # 4. POTONG SALDO PENGIRIM
+            sender.balance -= amount
+            
+            tx.status = "SUCCESS"
+            db.commit()
+
+            return {
+                "status": "SUCCESS",
+                "transaction_id": tx_id,
+                "transfer_info": {
+                    "sender": sender.owner_name,
+                    "receiver_bank": bri_response.get("beneficiaryBankName", bank_code),
+                    "receiver_account": receiver_account,
+                    "receiver_name": receiver.owner_name, 
+                    "amount": f"Rp{amount:,}",
+                    "balance_after": f"Rp{sender.balance:,}",
+                },
+                "bri_response": bri_response
             }
 
         except Exception as e:
