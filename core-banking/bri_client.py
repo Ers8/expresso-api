@@ -184,22 +184,20 @@ async def transfer_interbank_bri(sender: str, receiver: str, receiver_name: str,
     
     path = "/interbank/snap/v1.0/transfer-interbank"
 
-    # MOCKING SANDBOX: Kita samakan PERSIS dengan dokumentasi BRI 
-    # agar Sandbox merespons Sukses (2001800).
     body = {
         "partnerReferenceNo":   datetime.now().strftime("%Y%m%d%H%M%S%f")[:20],
         "amount": {
             "value":    f"{amount}.00",
             "currency": "IDR"
         },
-        "beneficiaryAccountName": "Dummy", # Sesuai dokumentasi
-        "beneficiaryAccountNo": "888801000187508", # Sesuai dokumentasi
+        "beneficiaryAccountName": "Dummy", 
+        "beneficiaryAccountNo": "888801000187508", 
         "beneficiaryAddress":   "Palembang",
-        "beneficiaryBankCode":  "002", # WAJIB 002 UNTUK LOLOS SANDBOX!
+        "beneficiaryBankCode":  "002",
         "beneficiaryBankName":  "Bank BRI",
         "beneficiaryEmail":     "yories.yolanda@work.bri.co.id",
         "customerReference":    datetime.now().strftime("%Y%m%d%H%M%S")[:20],
-        "sourceAccountNo":      "988901000187608", # Sesuai dokumentasi
+        "sourceAccountNo":      "988901000187608", 
         "transactionDate":      timestamp,
         "additionalInfo": {
             "deviceId": "12345679237",
@@ -225,8 +223,7 @@ async def transfer_interbank_bri(sender: str, receiver: str, receiver_name: str,
         )
         result = resp.json()
         
-        # --- 1. MAPPING NAMA BANK ---
-        # Kamus kecil agar setruk/UI frontend menerima nama bank yang bagus
+        # MAPPING NAMA BANK 
         bank_names = {
             "014": "Bank BCA",
             "008": "Bank Mandiri",
@@ -237,8 +234,6 @@ async def transfer_interbank_bri(sender: str, receiver: str, receiver_name: str,
         }
         real_bank_name = bank_names.get(bank_code, "Bank Lainnya")
 
-        # --- 2. TIMPA DATA DUMMY BRI DENGAN DATA ASLI ---
-        # Mencegat balasan BRI agar terlihat seperti transfer sungguhan di frontend
         if "beneficiaryAccountNo" in result:
             result["beneficiaryAccountNo"] = receiver
         if "beneficiaryBankCode" in result:
@@ -247,7 +242,6 @@ async def transfer_interbank_bri(sender: str, receiver: str, receiver_name: str,
         result["beneficiaryAccountName"] = receiver_name
         result["beneficiaryBankName"] = real_bank_name
         
-        # --- 3. DATA INTERNAL BACKEND (Untuk Database Supabase) ---
         result["local_sender"]      = sender
         result["external_receiver"] = receiver
         result["receiver_name"]     = receiver_name
