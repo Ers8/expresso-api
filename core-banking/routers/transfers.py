@@ -245,11 +245,6 @@ async def bri_transfer_via_url(
 # ================================================================
 # 3. ENDPOINT TRANSFER INTERBANK (BEDA BANK)
 # ================================================================
-
-# ================================================================
-# 3. ENDPOINT TRANSFER INTERBANK (BEDA BANK)
-# ================================================================
-
 @router.post("/bri/transfer-interbank")
 async def bri_transfer_interbank(
     request: Request,
@@ -261,7 +256,7 @@ async def bri_transfer_interbank(
     longitude: float = Form(106.8, description="Longitude")
 ):
     """
-    ### 💡 Panduan Testing Sandbox
+    ### Panduan Testing Sandbox
     Untuk menghindari error **"Akun tidak ditemukan"**, pastikan `sender_account` dan `receiver_account` sudah terdaftar di Database lokal:
     
     * **`0123456789`**
@@ -306,7 +301,7 @@ async def bri_transfer_interbank(
 
         balance_before = sender.balance
 
-        # 2. REKAM TRANSAKSI KE DATABASE
+        # REKAM TRANSAKSI KE DATABASE
         tx = Transaction(
             transaction_id    = tx_id,
             sender_account    = sender_account,
@@ -328,7 +323,6 @@ async def bri_transfer_interbank(
         db.commit()
 
         try:
-            # 3. TEMBAK API BRI (Nama otomatis diambil dari field owner_name di DB)
             bri_response = await transfer_interbank_bri(
                 sender        = sender_account,
                 receiver      = receiver_account,
@@ -346,7 +340,7 @@ async def bri_transfer_interbank(
                     f"Message: {bri_response.get('responseMessage')}"
                 )
 
-            # 4. POTONG SALDO PENGIRIM
+            # POTONG SALDO PENGIRIM
             sender.balance -= amount
             
             tx.status = "SUCCESS"
