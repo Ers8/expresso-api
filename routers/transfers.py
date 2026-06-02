@@ -293,10 +293,10 @@ async def bri_transfer_interbank(
         if sender.is_blocked:
             raise HTTPException(status_code=403, detail=f"Akun {sender.owner_name} diblokir")
             
-        if sender.balance < amount:
+        if sender.balance < (amount + 2500):
             raise HTTPException(
                 status_code=400, 
-                detail=f"Saldo tidak mencukupi. Saldo: Rp{sender.balance:,}"
+                detail=f"Saldo tidak mencukupi untuk transfer dan biaya admin Rp2.500. Saldo Anda: Rp{sender.balance:,}"
             )
 
         balance_before = sender.balance
@@ -340,8 +340,9 @@ async def bri_transfer_interbank(
                     f"Message: {bri_response.get('responseMessage')}"
                 )
 
-            # POTONG SALDO PENGIRIM
-            sender.balance -= amount
+            # POTONG SALDO PENGIRIM (TERMASUK ADMIN Rp2.500) DAN TAMBAH SALDO PENERIMA LOKAL
+            sender.balance -= (amount + 2500)
+            receiver.balance += amount
             
             tx.status = "SUCCESS"
             db.commit()
@@ -364,3 +365,48 @@ async def bri_transfer_interbank(
             tx.status = "FAILED"
             db.commit()
             raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/bri/account/{account_id}")
+def get_account_info(account_id: str):
+    """Mendapatkan informasi detail akun berdasarkan account_id untuk validasi nama penerima."""
+    with Session(engine) as db:
+        acc = db.get(Account, account_id)
+        if not acc:
+            raise HTTPException(status_code=404, detail="Akun tidak ditemukan")
+        return {
+            "account_id": acc.account_id,
+            "owner_name": acc.owner_name,
+            "balance": acc.balance,
+            "risk_profile": acc.risk_profile,
+            "is_active": acc.is_active,
+            "is_blocked": acc.is_blocked
+        }
+
+@router.get("/bri/transactions/{account_id}")
+def get_account_transactions(account_id: str):
+    """Mendapatkan riwayat transaksi untuk account_id tertentu."""
+    with Session(engine) as db:
+        txs = db.query(Transaction).filter(
+            (Transaction.sender_account == account_id) | 
+            (Transaction.receiver_account == account_id)
+        ).order_by(Transaction.timestamp.desc()).all()
+        
+        return [
+            {
+                "transaction_id": tx.transaction_id,
+                "sender_account": tx.sender_account,
+                "receiver_account": tx.receiver_account,
+                "amount": tx.amount,
+                "purpose_code": tx.purpose_code,
+                "description": tx.description,
+                "destination_type": tx.destination_type,
+                "ip_address": tx.ip_address,
+                "country_code": tx.country_code,
+                "latitude": tx.latitude,
+                "longitude": tx.longitude,
+                "timestamp": tx.timestamp.isoformat(),
+                "status": tx.status
+            }
+            for tx in txs
+        ]
