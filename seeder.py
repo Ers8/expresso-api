@@ -60,6 +60,55 @@ def seed_data():
                 risk_profile="LOW",
                 is_active=True,
                 is_blocked=False
+            ),
+            Account(
+                account_id="987654",
+                owner_name="Budi Santoso (Mule)",
+                balance=15000000,
+                risk_profile="MEDIUM",
+                is_active=True,
+                is_blocked=False
+            ),
+            # Akun Threat Intelligence untuk simulasi Blokir & Pending
+            Account(
+                account_id="C666666666",
+                owner_name="Indodax Mule Account",
+                balance=15000000,
+                risk_profile="HIGH",
+                is_active=True,
+                is_blocked=False
+            ),
+            Account(
+                account_id="C999999999",
+                owner_name="Tokocrypto Mixer Account",
+                balance=25000000,
+                risk_profile="HIGH",
+                is_active=True,
+                is_blocked=False
+            ),
+            Account(
+                account_id="C123456789",
+                owner_name="Binance Exchange Account",
+                balance=50000000,
+                risk_profile="MEDIUM",
+                is_active=True,
+                is_blocked=False
+            ),
+            Account(
+                account_id="C777777777",
+                owner_name="Indodax Fraud Receiver",
+                balance=10000000,
+                risk_profile="HIGH",
+                is_active=True,
+                is_blocked=False
+            ),
+            Account(
+                account_id="C888888888",
+                owner_name="Pintu Layering Account",
+                balance=12000000,
+                risk_profile="MEDIUM",
+                is_active=True,
+                is_blocked=False
             )
         ]
         

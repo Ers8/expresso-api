@@ -1,11 +1,59 @@
 from fastapi import APIRouter, HTTPException, Form, Request
 from sqlalchemy.orm import Session
-from models.db_models import Account, Transaction, engine
+from models.db_models import Account, Transaction, SentinelAlert, STRDraft, engine
 from datetime import datetime, timezone
 from bri_client import transfer_bri, transfer_interbank_bri
 import uuid
+import os
+import httpx
 
 router = APIRouter()
+
+async def analyze_via_sentinel(
+    sender_account: str,
+    receiver_account: str,
+    amount: float,
+    ip_address: str,
+    purpose_code: str,
+    description: str,
+    old_balance: float
+) -> dict:
+    """Mengirim transaksi ke Crypto-Sentinel API untuk analisis risiko."""
+    sentinel_url = os.getenv("SENTINEL_API_URL", "http://localhost:8000")
+    
+    payload = {
+        "type": "TRANSFER",
+        "amount": float(amount),
+        "oldbalanceOrg": float(old_balance),
+        "newbalanceOrig": float(old_balance - amount),
+        "destinationAccount": receiver_account,
+        "sender_account": sender_account,
+        "ip_address": ip_address,
+        "purpose_code": purpose_code,
+        "description": description
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{sentinel_url}/analyze-transaction",
+                json=payload,
+                timeout=5.0
+            )
+            if response.status_code == 200:
+                return response.json()
+            else:
+                print(f"[Sentinel API Warning] Status code: {response.status_code}. Response: {response.text}")
+    except Exception as e:
+        print(f"[Sentinel API Error] Gagal menghubungi Crypto-Sentinel di {sentinel_url}: {e}. Fallback ke ALLOW.")
+        
+    return {
+        "risk_score": 0.0,
+        "risk_level": "LOW",
+        "decision": "ALLOW",
+        "reasons": ["Sentinel Offline / Connection Error"],
+        "threat_match": None
+    }
 
 # ================================================================
 # 1. ENDPOINT TRANSFER (POST - PRODUCTION)
@@ -76,6 +124,62 @@ async def bri_transfer(
             status            = "PENDING"
         )
         db.add(tx)
+        db.flush()
+
+        # Sentinel API Risk Assessment
+        sentinel_res = await analyze_via_sentinel(
+            sender_account=sender_account,
+            receiver_account=receiver_account,
+            amount=amount,
+            ip_address=ip_address,
+            purpose_code=purpose_code,
+            description=description,
+            old_balance=sender.balance
+        )
+        
+        sentinel_decision = sentinel_res.get("decision", "ALLOW")
+        sentinel_score = sentinel_res.get("risk_score", 0.0)
+        reasons = sentinel_res.get("reasons", [])
+        
+        tx.sentinel_score = sentinel_score
+        tx.sentinel_decision = sentinel_decision
+        
+        if sentinel_decision in ["BLOCK", "REVIEW"]:
+            tx.status = "FAILED"
+            
+            # Buat SentinelAlert
+            alert = SentinelAlert(
+                transaction_id=tx_id,
+                risk_score=sentinel_score,
+                indicators_json=reasons,
+                shap_values_json={"risk_level": sentinel_res.get("risk_level", "LOW")},
+                resolved=False
+            )
+            db.add(alert)
+            db.flush()
+            
+            # Buat STRDraft jika BLOCKED
+            if sentinel_decision == "BLOCK":
+                str_id = "STR-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-" + str(uuid.uuid4())[:6].upper()
+                str_draft = STRDraft(
+                    str_id=str_id,
+                    alert_id=alert.alert_id,
+                    summary_text=f"Deteksi pencucian uang otomatis: Akun {sender.owner_name} mengirim Rp{amount:,} ke {receiver.owner_name} (Watchlist Kategori: {', '.join(reasons)}).",
+                    risk_factors=reasons,
+                    status="DRAFT",
+                    analyst_id="SYSTEM"
+                )
+                db.add(str_draft)
+                
+            db.commit()
+            
+            if sentinel_decision == "BLOCK":
+                detail_msg = f"Transaksi diblokir otomatis oleh sistem keamanan Crypto-Sentinel karena terindikasi penipuan/fraud (Skor Risiko: {sentinel_score}. Alasan: {', '.join(reasons)})"
+            else:
+                detail_msg = f"Transaksi ditangguhkan oleh sistem keamanan Crypto-Sentinel untuk ditinjau oleh analis kepatuhan (Skor Risiko: {sentinel_score}. Alasan: {', '.join(reasons)})"
+                
+            raise HTTPException(status_code=403, detail=detail_msg)
+
         db.commit()
 
         try:
@@ -189,6 +293,62 @@ async def bri_transfer_via_url(
             status            = "PENDING"
         )
         db.add(tx)
+        db.flush()
+
+        # Sentinel API Risk Assessment
+        sentinel_res = await analyze_via_sentinel(
+            sender_account=sender,
+            receiver_account=receiver,
+            amount=amount,
+            ip_address=ip_address,
+            purpose_code=purpose_code,
+            description=description,
+            old_balance=sender_acc.balance
+        )
+        
+        sentinel_decision = sentinel_res.get("decision", "ALLOW")
+        sentinel_score = sentinel_res.get("risk_score", 0.0)
+        reasons = sentinel_res.get("reasons", [])
+        
+        tx.sentinel_score = sentinel_score
+        tx.sentinel_decision = sentinel_decision
+        
+        if sentinel_decision in ["BLOCK", "REVIEW"]:
+            tx.status = "FAILED"
+            
+            # Buat SentinelAlert
+            alert = SentinelAlert(
+                transaction_id=tx_id,
+                risk_score=sentinel_score,
+                indicators_json=reasons,
+                shap_values_json={"risk_level": sentinel_res.get("risk_level", "LOW")},
+                resolved=False
+            )
+            db.add(alert)
+            db.flush()
+            
+            # Buat STRDraft jika BLOCKED
+            if sentinel_decision == "BLOCK":
+                str_id = "STR-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-" + str(uuid.uuid4())[:6].upper()
+                str_draft = STRDraft(
+                    str_id=str_id,
+                    alert_id=alert.alert_id,
+                    summary_text=f"Deteksi pencucian uang otomatis: Akun {sender_acc.owner_name} mengirim Rp{amount:,} ke {receiver_acc.owner_name} (Watchlist Kategori: {', '.join(reasons)}).",
+                    risk_factors=reasons,
+                    status="DRAFT",
+                    analyst_id="SYSTEM"
+                )
+                db.add(str_draft)
+                
+            db.commit()
+            
+            if sentinel_decision == "BLOCK":
+                detail_msg = f"Transaksi diblokir otomatis oleh sistem keamanan Crypto-Sentinel karena terindikasi penipuan/fraud (Skor Risiko: {sentinel_score}. Alasan: {', '.join(reasons)})"
+            else:
+                detail_msg = f"Transaksi ditangguhkan oleh sistem keamanan Crypto-Sentinel untuk ditinjau oleh analis kepatuhan (Skor Risiko: {sentinel_score}. Alasan: {', '.join(reasons)})"
+                
+            raise HTTPException(status_code=403, detail=detail_msg)
+
         db.commit()
 
         try:
@@ -320,6 +480,62 @@ async def bri_transfer_interbank(
             status            = "PENDING"
         )
         db.add(tx)
+        db.flush()
+
+        # Sentinel API Risk Assessment
+        sentinel_res = await analyze_via_sentinel(
+            sender_account=sender_account,
+            receiver_account=receiver_account,
+            amount=amount,
+            ip_address=ip_address,
+            purpose_code="SALA",
+            description=f"Transfer Interbank ke Bank {bank_code}",
+            old_balance=sender.balance
+        )
+        
+        sentinel_decision = sentinel_res.get("decision", "ALLOW")
+        sentinel_score = sentinel_res.get("risk_score", 0.0)
+        reasons = sentinel_res.get("reasons", [])
+        
+        tx.sentinel_score = sentinel_score
+        tx.sentinel_decision = sentinel_decision
+        
+        if sentinel_decision in ["BLOCK", "REVIEW"]:
+            tx.status = "FAILED"
+            
+            # Buat SentinelAlert
+            alert = SentinelAlert(
+                transaction_id=tx_id,
+                risk_score=sentinel_score,
+                indicators_json=reasons,
+                shap_values_json={"risk_level": sentinel_res.get("risk_level", "LOW")},
+                resolved=False
+            )
+            db.add(alert)
+            db.flush()
+            
+            # Buat STRDraft jika BLOCKED
+            if sentinel_decision == "BLOCK":
+                str_id = "STR-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-" + str(uuid.uuid4())[:6].upper()
+                str_draft = STRDraft(
+                    str_id=str_id,
+                    alert_id=alert.alert_id,
+                    summary_text=f"Deteksi pencucian uang otomatis: Akun {sender.owner_name} mengirim Rp{amount:,} ke {receiver.owner_name} (Watchlist Kategori: {', '.join(reasons)}).",
+                    risk_factors=reasons,
+                    status="DRAFT",
+                    analyst_id="SYSTEM"
+                )
+                db.add(str_draft)
+                
+            db.commit()
+            
+            if sentinel_decision == "BLOCK":
+                detail_msg = f"Transaksi diblokir otomatis oleh sistem keamanan Crypto-Sentinel karena terindikasi penipuan/fraud (Skor Risiko: {sentinel_score}. Alasan: {', '.join(reasons)})"
+            else:
+                detail_msg = f"Transaksi ditangguhkan oleh sistem keamanan Crypto-Sentinel untuk ditinjau oleh analis kepatuhan (Skor Risiko: {sentinel_score}. Alasan: {', '.join(reasons)})"
+                
+            raise HTTPException(status_code=403, detail=detail_msg)
+
         db.commit()
 
         try:
